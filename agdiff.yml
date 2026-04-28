@@ -1,0 +1,24 @@
+name: agdiff
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch=2.4.*
+  - torchvision=0.19.*
+  - torchaudio=2.4.*
+  - pytorch-cuda=12.1
+  - rdkit
+  - numpy=1.26.*
+  - scipy
+  - pandas
+  - scikit-learn
+  - pyyaml
+  - easydict
+  - tqdm
+  - tensorboard
+  - networkx
+  - joblib

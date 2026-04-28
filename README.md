@@ -14,6 +14,8 @@ AGDIFF_chi is an all-atom diffusion workflow for molecular 3D structure generati
 - `logs/cremp_default_batch64_2024_12_12__14_42_15/best_model/best_model.pt` — bundled pretrained checkpoint used for the AGDIFF_chi code test.
 - `logs/cremp_default_batch64_2024_12_12__14_42_15/cremp_default_batch64.yml` — paired configuration file loaded with the checkpoint.
 - `assets/diffusion.gif` — molecule-generation animation.
+- `agdiff.yml` — Conda environment file for a public AGDIFF_chi installation.
+- `setup.py` / `pyproject.toml` — editable-install metadata inherited from the original AGDIFF package layout.
 
 ## Robust stereochemistry filtering
 
@@ -41,14 +43,60 @@ Common filter reasons include:
 
 ## Environment setup
 
-Create or activate an AGDIFF-compatible Conda environment, then install the repository in editable mode.  The exact PyTorch/PyG wheels should match your CUDA version; for the tested HPC environment, the existing `agdiff` environment was used.
+The recommended setup follows the original AGDIFF installation pattern: create a Conda environment, install PyTorch/PyG packages matched to your CUDA build, then install this repository in editable mode.
+
+### 1. Create the Conda environment
 
 ```bash
+conda env create -f agdiff.yml
 conda activate agdiff
+```
+
+The provided `agdiff.yml` targets Python 3.10 with PyTorch 2.4.x and CUDA 12.1. It includes the common scientific dependencies used by AGDIFF/AGDIFF_chi, including RDKit, NumPy, SciPy, pandas, scikit-learn, PyYAML, EasyDict, tqdm, TensorBoard, NetworkX, and Joblib.
+
+If your workstation uses a different CUDA version, adjust the PyTorch/PyG commands below according to the official PyTorch and PyTorch Geometric installation pages.
+
+### 2. Install PyTorch Geometric compiled extensions
+
+For the CUDA 12.1 / PyTorch 2.4 environment above, install the PyG packages with the matching wheel index:
+
+```bash
+pip install torch_geometric==2.6.1
+pip install torch-scatter==2.1.2 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+pip install torch-sparse==0.6.18 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+pip install torch-cluster==1.6.3 -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
+```
+
+### 3. Install AGDIFF_chi in editable mode
+
+From the repository root:
+
+```bash
 pip install -e .
 ```
 
-If you are creating a new environment, install PyTorch, RDKit, PyTorch Geometric, `torch-scatter`, `torch-sparse`, and `torch-cluster` with versions matched to your CUDA/PyTorch build.  PyG wheel indexes are available at <https://data.pyg.org/>.
+### 4. Verify the installation
+
+```bash
+python - <<'PY'
+import torch
+import torch_geometric
+import torch_scatter
+import torch_sparse
+import torch_cluster
+import rdkit
+
+print('torch', torch.__version__)
+print('torch_geometric', torch_geometric.__version__)
+print('torch_scatter', torch_scatter.__version__)
+print('torch_sparse', torch_sparse.__version__)
+print('torch_cluster', torch_cluster.__version__)
+print('rdkit', rdkit.__version__)
+print('cuda_available', torch.cuda.is_available())
+PY
+```
+
+For GPU generation, `cuda_available` should be `True`.
 
 ## Generate conformers from a SMILES string
 
