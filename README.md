@@ -1,136 +1,138 @@
-# AGDIFF: Attention-Enhanced Diffusion for Molecular Geometry Prediction
+# AGDIFF_chi
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/ADicksonLab/AGDIFF/blob/main/LICENSE)
+AGDIFF_chi is an all-atom diffusion workflow for molecular 3D structure generation with stereochemistry-aware conformer filtering. This repository contains the AGDIFF codebase plus a cyclic-peptide/small-molecule generation entry point that was used for the stereogenic implementation described in the JCIM paper below.
 
-**[paper](https://chemrxiv.org/engage/chemrxiv/article-details/6703fbffcec5d6c14273d4ce)**
-
-
-This repository contains the official implementation of the work "AGDIFF: Attention-Enhanced Diffusion for Molecular Geometry Prediction".
-
-AGDIFF introduces a novel approach that enhances diffusion models with attention mechanisms and an improved SchNet architecture, achieving state-of-the-art performance in predicting molecular geometries.
-
-### Unique Features of AGDIFF
-
-- **Attention Mechanisms**: Enhances the global and local encoders with attention mechanisms for better feature extraction and integration.
-- **Improved SchNet Architecture**: Incorporates learnable activation functions, adaptive scaling modules, and dual pathway processing to increase model expressiveness.
-- **Batch Normalization**: Stabilizes training and improves convergence for the local encoder.
-- **Feature Expansion**: Extends the MLP Edge Encoder with feature expansion and processing, combining processed features and bond embeddings for more adaptable edge representations.
+**Paper:** [Accurate 3D Structure Prediction of Small Cyclic Peptides Containing Non-Canonical Amino Acid Residues Using an All-Atom Diffusion Model with Stereogenic Implementation](https://pubs.acs.org/doi/abs/10.1021/acs.jcim.5c03236), *Journal of Chemical Information and Modeling*, 2026.
 
 <p align="center">
-	<img src="assets/agdiff_framework.png" alt="photo not available" width="80%" height="100%">
+  <img src="assets/diffusion.gif" alt="AGDIFF_chi molecule generation animation" width="80%">
 </p>
 
+## What is included
 
-https://github.com/user-attachments/assets/78feda75-3a20-422a-9b3f-f96fceea69cc
+- `scripts/smiles_generation.py` — SMILES-to-SDF generation script.
+- `logs/cremp_default_batch64_2024_12_12__14_42_15/best_model/best_model.pt` — bundled pretrained checkpoint used for the AGDIFF_chi code test.
+- `logs/cremp_default_batch64_2024_12_12__14_42_15/cremp_default_batch64.yml` — paired configuration file loaded with the checkpoint.
+- `assets/diffusion.gif` — molecule-generation animation.
 
+## Robust stereochemistry filtering
 
-## Content ##
-0. [Environment Setup](#environment-setup)
-0. [Dataset](#dataset)
-0. [Training](#training)
-0. [Generation](#generation)
-0. [Evaluation](#evaluation)
-0. [Acknowledgment](#acknowledgement)
-0. [Citation](#citation)
+The `scripts/smiles_generation.py` workflow includes robust post-generation filtering for molecules with specified stereocenters:
 
+1. Compare only the chiral centers that are explicitly specified in the input SMILES.
+2. Ignore newly assigned R/S labels at originally unspecified centers.
+3. If every originally specified chiral center is reversed, treat the conformer as a global mirror image, reflect its coordinates, re-detect 3D chirality, and keep it only if the reflected conformer matches the target stereochemistry.
+4. Apply a simple covalent bond-length QC before accepting a conformer.
+5. Stop early once the requested number of filtered conformers has been obtained.
+6. Write the final filtered output as `molecules.sdf` in the requested output directory.
 
+Accepted conformers are annotated in the SDF with properties such as:
 
-## Environment Setup ##
+- `agdiff_source_index`
+- `agdiff_filter_reason`
+- `agdiff_bond_min`
+- `agdiff_bond_max`
 
+Common filter reasons include:
 
-### Install dependencies via Conda/Mamba
+- `specified_centers_match`
+- `all_specified_centers_reversed_flipped_to_match`
+- `no_assigned_chiral_centers_flippable`
+
+## Environment setup
+
+Create or activate an AGDIFF-compatible Conda environment, then install the repository in editable mode.  The exact PyTorch/PyG wheels should match your CUDA version; for the tested HPC environment, the existing `agdiff` environment was used.
 
 ```bash
-conda env create -f agdiff.yml
 conda activate agdiff
-pip install torch_geometric
-pip install torch-scatter -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
-pip install torch-sparse -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
-pip install torch-cluster -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
-```
-
-Once you installed all the dependencies, you should install the package locally in editable mode:
-
-```bash
 pip install -e .
 ```
 
+If you are creating a new environment, install PyTorch, RDKit, PyTorch Geometric, `torch-scatter`, `torch-sparse`, and `torch-cluster` with versions matched to your CUDA/PyTorch build.  PyG wheel indexes are available at <https://data.pyg.org/>.
 
+## Generate conformers from a SMILES string
 
-## Dataset ##
+Example: generate five filtered conformers for cyclo(Ala-Ala-Ala-Ala-Ala).
 
-### Official Dataset
+```bash
+CKPT=logs/cremp_default_batch64_2024_12_12__14_42_15/best_model/best_model.pt
+SMILES='C[C@@H]1NC(=O)[C@H](C)NC(=O)[C@H](C)NC(=O)[C@H](C)NC(=O)[C@H](C)NC1=O'
 
-The preprocessed datasets (GEOM) provided by [GEODIFF](https://github.com/MinkaiXu/GeoDiff?tab=readme-ov-file#dataset) can be found in this [[Google Drive folder]](https://drive.google.com/drive/folders/18EmDt_TK157Ip5vWxUDUiKsjYN_zj51-?usp=sharing). After downloading and unzipping the dataset, it should be placed in the folder path specified by the `dataset` variable in the configuration files located at `./configs/*.yml`. You may also want to use the pretrained model provided in the same link.
+python scripts/smiles_generation.py "$CKPT" \
+  --smiles "$SMILES" \
+  --out_sdf outputs/cyclo_AAAAA \
+  --num_confs 1 \
+  --num_refs 5 \
+  --max_num_refs 50 \
+  --gpus 1 \
+  --n_steps 5000 \
+  --tag cyclo_AAAAA_demo
+```
 
+The filtered result is written to:
 
-The official raw GEOM dataset is also available [[here]](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/JNGTDF).
+```text
+outputs/cyclo_AAAAA/molecules.sdf
+```
 
-## Training ##
+## Output interpretation
 
-AGDIFF's training details and hyper-parameters are provided in the config files (`./configs/*.yml`). Feel free to tune these parameters as needed.
+During generation, the script may oversample because stereochemical filtering can reject many raw candidates. For example, in a five-conformer cyclo(Ala)5 test, the script generated 98 raw conformers in two chunks of 49 raw conformers each, then early-stopped after five conformers passed stereochemistry and bond-length QC.
 
-To train the model, use the following commands:
+Use RDKit to count accepted records:
+
+```bash
+python - <<'PY'
+from rdkit import Chem
+path = 'outputs/cyclo_AAAAA/molecules.sdf'
+print(sum(1 for m in Chem.SDMolSupplier(path, removeHs=False) if m is not None))
+PY
+```
+
+## Original AGDIFF usage
+
+Training and benchmark evaluation scripts from the base AGDIFF implementation are kept in this repository. Example training commands:
 
 ```bash
 python scripts/train.py ./configs/qm9_default.yml
 python scripts/train.py ./configs/drugs_default.yml
-``` 
-Model checkpoints, configuration YAML files, and training logs will be saved in a directory specified by `--logdir` in `train.py`.
-
-## Generation ##
-
-To generate conformations for entire or part of test sets, use:
-
-```bash 
-python scripts/test.py ./logs/path/to/checkpoints/${iter}.pt ./configs/qm9_default.yml \
-    --start_idx 0 --end_idx 200
-```
-Here `start_idx` and `end_idx` indicate the range of the test set that we want to use. To reproduce the paper's results, you should use 0 and 200 for start_idx and end_idx, respectively. All hyper-parameters related to sampling can be set in `test.py` files. Specifically, for testing the qm9 model, you could add the additional arg `--w_global 0.3`, which empirically shows slightly better results.
-
-We also provide an example of conformation generation for a specific molecule (alanine dipeptide) in the `examples` folder. To generate conformations for alanine dipeptide, use:
-
-```bash 
-python examples/test_alanine_dipeptide.py ./logs/path/to/checkpoints/${iter}.pt ./configs/qm9_default.yml 
-
 ```
 
-## Evaluation ##
-
-After generating conformations, evaluate the results of benchmark tasks using the following commands.
-
-### Task 1. Conformation Generation
-
-Calculate `COV` and `MAT` scores on the GEOM datasets with:
+Example benchmark generation command:
 
 ```bash
-python scripts/evaluation/eval_covmat.py path/to/samples/sample_all.pkl
+python scripts/test.py ./logs/path/to/checkpoints/${iter}.pt ./configs/qm9_default.yml \
+  --start_idx 0 --end_idx 200
 ```
 
+## Citation
 
-## Acknowledgement ##
-
-Our implementation is based on [GEODIFF](https://github.com/MinkaiXu/GeoDiff), [PyTorch](https://pytorch.org/), [PyG](https://pytorch-geometric.readthedocs.io/en/latest/index.html), [SchNet](https://github.com/atomistic-machine-learning/SchNet)
-
-
-## Citation ##
-
-If you use our code or method in your work, please consider citing the following:
+If you use AGDIFF_chi, please cite:
 
 ```bibtex
-@misc{wyzykowskiAGDIFFAttentionEnhancedDiffusion2024,
-  title = {{{AGDIFF}}: {{Attention-Enhanced Diffusion}} for {{Molecular Geometry Prediction}}},
-  shorttitle = {{{AGDIFF}}},
-  author = {Wyzykowski, Andr{\'e} Brasil Vieira and Fathi Niazi, Fatemeh and Dickson, Alex},
-  year = {2024},
-  month = oct,
-  publisher = {ChemRxiv},
-  doi = {10.26434/chemrxiv-2024-wrvr4},
-  urldate = {2024-10-09},
-  archiveprefix = {ChemRxiv},
-  langid = {english},
-  keywords = {attention,conformer,diffusion models,generative,GNN,graph neural network,machine learning,structure}
+@article{wu2026agdiffchi,
+  title   = {Accurate 3D Structure Prediction of Small Cyclic Peptides Containing Non-Canonical Amino Acid Residues Using an All-Atom Diffusion Model with Stereogenic Implementation},
+  author  = {Wu, Dizhou and Zou, Yike},
+  journal = {Journal of Chemical Information and Modeling},
+  year    = {2026},
+  doi     = {10.1021/acs.jcim.5c03236}
 }
 ```
 
-Please direct any questions to André Wyzykowski (abvwmc@gmail.com) and Alex Dickson (alexrd@msu.edu).
+This repository builds on the original AGDIFF implementation:
+
+```bibtex
+@misc{wyzykowskiAGDIFFAttentionEnhancedDiffusion2024,
+  title         = {{{AGDIFF}}: {{Attention-Enhanced Diffusion}} for {{Molecular Geometry Prediction}}},
+  author        = {Wyzykowski, Andr{\'e} Brasil Vieira and Fathi Niazi, Fatemeh and Dickson, Alex},
+  year          = {2024},
+  month         = oct,
+  publisher     = {ChemRxiv},
+  doi           = {10.26434/chemrxiv-2024-wrvr4},
+  archiveprefix = {ChemRxiv}
+}
+```
+
+## Acknowledgement
+
+The base AGDIFF implementation is based on GEODIFF, PyTorch, PyTorch Geometric, and SchNet.

@@ -1,0 +1,27 @@
+__pycache__/
+*.pyc
+*.pyo
+*.out
+*.err
+*.log
+*.sdf
+*.png
+*.pdb
+*.cif
+*.pkl
+*.pth
+*.tar.gz
+*_v[0-9]*
+*.bak
+*~
+cyclo_*_flip_*/
+flip_unit_test*/
+sample_*/
+AGDIFF_code_test_*/
+
+# Ignore generated logs/checkpoints by default, but keep the bundled pretrained model.
+logs/**
+!logs/cremp_default_batch64_2024_12_12__14_42_15/
+!logs/cremp_default_batch64_2024_12_12__14_42_15/best_model/
+!logs/cremp_default_batch64_2024_12_12__14_42_15/best_model/best_model.pt
+!logs/cremp_default_batch64_2024_12_12__14_42_15/cremp_default_batch64.yml
