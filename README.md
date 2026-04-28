@@ -183,4 +183,4 @@ This repository builds on the original AGDIFF implementation:
 
 ## Acknowledgement
 
-The base AGDIFF implementation is based on GEODIFF, PyTorch, PyTorch Geometric, and SchNet.
+AGDIFF_chi is based on AGDIFF, GEODIFF, PyTorch, PyTorch Geometric, and SchNet. We thank the developers and contributors of these projects for making their work available.
