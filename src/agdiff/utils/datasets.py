@@ -861,65 +861,6 @@ class SidechainConformationDataset(ConformationDataset):
    
 
 
-def accumulate_grad_from_subgraph(model, atom_type, pos, bond_index, bond_type, batch, atom2res, batch_size=8, device='cuda:0',
-                                  is_sidechain=None, is_alpha=None, pos_gt=None, cutoff=10., max_residue=5000, transform=None):
-    """
-    1. decompose the protein to subgraphs
-    2. evaluate subgraphs using trained models
-    3. accumulate atom-wise grads
-    4. return grads
-    """
-
-    accumulated_grad = torch.zeros_like(pos)
-    accumulated_time = torch.zeros(pos.size(0), device=pos.deivce)
-
-    all_subgraphs = []
-    dummy_index = torch.arange(pos.size(0))
-    
-    # prepare subgraphs
-    is_covered = torch.zeros(pos.size(0), device=pos.deivce).bool()
-    is_alpha_and_uncovered = is_alpha & (~is_covered)
-    while is_alpha_and_uncovered.sum().item() != 0:
-
-        alpha_index = dummy_index[is_alpha_and_uncovered]
-        center_atom_index = alpha_index[torch.randint(low=0, high=alpha_index.size(0), size=(1, ))] # (1, )
-        pos_center_atom = pos[center_atom_index] # (1, 3)
-
-        distance = (pos_center_atom - pos).norm(dim=-1)
-        mask = (distance <= cutoff)
-
-        is_keep_residue = scatter(mask, atom2res, dim=-1, dim_size=max_residue, reduce='sum') # (max_residue, )
-        is_keep_atom = is_keep_residue[atom2res]
-        is_keep_edge = (is_keep_atom[bond_index[0]]) & (is_keep_atom[bond_index[1]])
-
-        mapping = -torch.ones(pos.size(0), dtype=torch.long)
-        keep_index = dummy_index[is_keep_atom]
-        mapping[keep_index] = torch.arange(keep_index.size(0))
-    
-        is_covered |= is_keep_atom
-        is_alpha_and_uncovered = is_alpha & (~is_covered)   
-
-        if (is_sidechain[is_keep_atom]).sum().item() == 0:
-            continue
-
-        subgraph = Data(atom_type=atom_type[is_keep_atom], 
-                             pos=pos[is_keep_atom], 
-                             edge_index=mapping[bond_index[:, is_keep_edge]], 
-                             edge_type=bond_type[is_keep_edge],
-                             is_sidechain=is_sidechain[is_keep_atom], 
-                             atom2res=atom2res[is_keep_atom],
-                             mapping=keep_index)    
-        if transform is not None:
-            subgraph = transform(subgraph)          
-        all_subgraphs.append(subgraph)
-    
-    # run model
-    tot_iters = (len(all_subgraphs) + batch_size - 1) // batch_size
-    for it in range(tot_iters):
-        batch = Batch.from_data_list(all_subgraphs[it * batch_size, (it + 1) * batch_size]).to(device)
-
-
-
 class PackedConformationDataset(ConformationDataset):
 
     def __init__(self, path, transform=None):

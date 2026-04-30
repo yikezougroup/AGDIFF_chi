@@ -11,7 +11,6 @@ from src.agdiff.utils.chem import BOND_TYPES
 from ..common import MultiLayerPerceptron, assemble_atom_pair_feature, generate_symmetric_edge_noise, extend_graph_order_radius
 from ..encoder import SchNetEncoder, GINEncoder, get_edge_encoder
 from ..geometry import get_distance, get_angle, get_dihedral, eq_transform
-import pdb
 import torch.nn.functional as F
 import time
 
@@ -215,7 +214,7 @@ class DualEncoderEpsNetwork(nn.Module):
             return edge_inv_global, edge_inv_local
 
     def get_loss_diffusion(self, atom_type, pos, bond_index, bond_type, batch, num_nodes_per_graph, num_graphs, 
-                 anneal_power=2.0, return_unreduced_loss=False, return_unreduced_edge_loss=False, extend_order=True, extend_radius=True):
+                 anneal_power=2.0, return_unreduced_loss=False, extend_order=True, extend_radius=True):
         #N = atom_type.size(0)
 
         # Four elements for DDPM: original_data(pos), gaussian_noise(pos_noise), beta(sigma), time_step
@@ -279,9 +278,7 @@ class DualEncoderEpsNetwork(nn.Module):
         loss = loss_global + loss_local
         # loss_pos = scatter_add(loss_pos.squeeze(), node2graph)  # (G, 1)
 
-        if return_unreduced_edge_loss:
-            pass
-        elif return_unreduced_loss:
+        if return_unreduced_loss:
             return loss, loss_global, loss_local
         else:
             return loss
