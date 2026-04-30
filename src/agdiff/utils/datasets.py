@@ -19,176 +19,7 @@ import networkx as nx
 from tqdm import tqdm
 from .chem import BOND_TYPES, mol_to_smiles
 
-# import sidechainnet as scn
 RDLogger.DisableLog('rdApp.*')
-
-
-def prepare_pdb2(scn_dir, data_path):
-
-    # step 1: filter and save pdb file.
-    train_data = []
-    cnt_fail = 0
-    
-
-    def get_num_plusseg(msk):
-        tmp = [0]
-        for i in range(1, len(msk)):
-            if msk[i] == msk[i-1]:
-                tmp.append(0)
-            else:
-                tmp.append(1)
-        s = sum(tmp)
-        if msk[0] == '-':
-            return (s + 1) // 2
-        else:
-            return (s // 2) + 1        
-        
-    def get_plus_rate(msk):
-        cnt = sum([1 if x == '+' else 0 for x in msk])
-        return cnt / len(msk)
-    
-    d = scn.load(casp_version=12, thinning=30, scn_dir=scn_dir)
-    raw_data = d['train']
-
-    mask = raw_data['msk']
-    n_raw_data = len(mask)
-    cnt_seg = 0
-    cnt_success = 0
-    for i in tqdm(range(n_raw_data)):
-        if get_plus_rate(mask[i]) > 0.5 and get_num_plusseg(mask[i]) == 1:
-            cnt_seg += 1
-            mask_ = [1 if _ == '+' else 0 for _ in mask[i]]
-            if sum(mask_) < 200:
-                cnt_success += 1                
-                seq = raw_data['seq'][i]
-                crd = raw_data['crd'][i]
-                name = raw_data['ids'][i]
-                mol = scn.StructureBuilder(seq, crd)
-                mol.to_pdb('./tmp.pdb')
-                data = pdb_to_data('./tmp.pdb', name)
-                if data is not None:
-                    train_data.append(data)
-                else:
-                    cnt_fail += 1                
-    
-    print('total n_raw_data: %d, cnt_seg: %d, cnt_success: %d' % (n_raw_data, cnt_seg, cnt_success))
-    
-    n_data = len(train_data)
-    print('number of train samples: %d | number of fails: %d' % (n_data, cnt_fail))
-
-    os.makedirs(os.path.join(data_path), exist_ok=True)
-
-    with open(os.path.join(data_path, 'train_data_%dk.pkl' % (n_data // 1000)), "wb") as fout:
-        pickle.dump(train_data, fout)
-    print('save train %dk done' % (n_data // 1000))
-
- 
-
-def prepare_pdblarge(scn_dir, data_path):
-
-    # step 1: filter and save pdb file.
-    train_data = []
-    cnt_fail = 0
-    
-    max_residue = 0
-    
-    d = scn.load(casp_version=12, thinning=30, scn_dir=scn_dir)
-    raw_data = d['train']
-
-    mask = raw_data['msk']
-    n_raw_data = len(mask)
-    cnt_seg = 0
-    cnt_success = 0
-    for i in tqdm(range(n_raw_data)):
-        # if get_plus_rate(mask[i]) > 0.5 and get_num_plusseg(mask[i]) == 1:
-        if True:
-            cnt_seg += 1
-            mask_ = [1 if _ == '+' else 0 for _ in mask[i]]
-            if sum(mask_) < 400:
-                
-                cnt_success += 1                
-                seq = raw_data['seq'][i]
-                crd = raw_data['crd'][i]
-                name = raw_data['ids'][i]
-                mol = scn.StructureBuilder(seq, crd)
-                mol.to_pdb('./tmp.pdb')
-                data = pdb_to_data('./tmp.pdb', name)
-                if data is not None:
-                    train_data.append(data)
-                    max_residue = max(max_residue, sum(mask_))
-                else:
-                    cnt_fail += 1                
-    
-    print('total n_raw_data: %d, cnt_seg: %d, cnt_success: %d, max_residue: %d' % (n_raw_data, cnt_seg, cnt_success, max_residue))
-    
-    n_data = len(train_data)
-    print('number of train samples: %d | number of fails: %d' % (n_data, cnt_fail))
-
-    os.makedirs(os.path.join(data_path), exist_ok=True)
-
-    with open(os.path.join(data_path, 'train_data_%dk.pkl' % (n_data // 1000)), "wb") as fout:
-        pickle.dump(train_data, fout)
-    print('save train %dk done' % (n_data // 1000))
-
- 
-def prepare_pdb_valtest(scn_dir, data_path):
-
-    # step 1: filter and save pdb file.
-    val_data = []
-    test_data = []
-    all_data = []
-
-    cnt_fail = 0
-    
-    max_residue = 0
-    n_raw_data = 0
-    cnt_success = 0    
-    
-    d = scn.load(casp_version=12, thinning=30, scn_dir=scn_dir)
-    fetch_dict = ['test', 'valid-10', 'valid-20', 'valid-30', 'valid-40', 'valid-50', 'valid-70', 'valid-90']
-    for dict_name in fetch_dict:
-        raw_data = d[dict_name]
-        mask = raw_data['msk']
-        n_raw_data += len(mask)
-        cnt_seg = 0
-        cnt_success = 0
-        for i in tqdm(range(len(mask))):
-            # if get_plus_rate(mask[i]) > 0.5 and get_num_plusseg(mask[i]) == 1:
-            if True:
-                mask_ = [1 if _ == '+' else 0 for _ in mask[i]]
-                if sum(mask_) < 400:
-                    
-                    seq = raw_data['seq'][i]
-                    crd = raw_data['crd'][i]
-                    name = raw_data['ids'][i]
-                    mol = scn.StructureBuilder(seq, crd)
-                    mol.to_pdb('./tmp.pdb')
-                    data = pdb_to_data('./tmp.pdb', name)
-                    if data is not None:
-                        cnt_success += 1                
-                        all_data.append(data)
-                        max_residue = max(max_residue, sum(mask_))
-                    else:
-                        cnt_fail += 1                
-    
-    print('total n_raw_data: %d, cnt_success: %d, max_residue: %d' % (n_raw_data, cnt_success, max_residue))
-    
-    random.shuffle(all_data)
-    n_val = len(all_data) // 2
-    n_test = len(all_data) - n_val
-    print('number of val samples: %d | number of test samples: %d | number of fails: %d' % (n_val, n_test, cnt_fail))
-
-    os.makedirs(os.path.join(data_path), exist_ok=True)
-
-    with open(os.path.join(data_path, 'val_data_%dk.pkl' % (n_val // 1000)), "wb") as fout:
-        pickle.dump(all_data[:n_val], fout)
-    print('save val %dk done' % (n_val // 1000))
-
-    with open(os.path.join(data_path, 'test_data_%dk.pkl' % (n_test // 1000)), "wb") as fout:
-        pickle.dump(all_data[n_val:], fout)
-    print('save test %dk done' % (n_test // 1000))
-
-
 
 
 
@@ -202,7 +33,6 @@ def pdb_to_data(pdb_path, name):
 
     assert mol.GetNumConformers() == 1
     N = mol.GetNumAtoms()
-    # name = pdb_path.split('/')[-1].split('.')[0]
     pos = torch.tensor(mol.GetConformer(0).GetPositions(), dtype=torch.float32)
 
     atomic_number = []
@@ -256,7 +86,6 @@ def pdb_to_data(pdb_path, name):
 
     if is_sidechain.sum().item() == 0: # protein built solely on GLY can not be used for sidechain prediction
         return None
-    # assert (4 * num_res == (len(is_sidechain) - sum(is_sidechain))),(4 * num_res, (len(is_sidechain) - sum(is_sidechain)))
     z = torch.tensor(atomic_number, dtype=torch.long)
 
     row, col, edge_type = [], [], []
@@ -279,11 +108,8 @@ def pdb_to_data(pdb_path, name):
 
     num_hs = scatter(hs[row], col, dim_size=N, reduce='sum').tolist()
 
-    # smiles = Chem.MolToSmiles(mol)
-
     data = Data(atom_type=z, pos=pos, edge_index=edge_index, edge_type=edge_type, is_alpha=is_alpha,
                 rdmol=copy.deepcopy(mol), name=name, is_sidechain=is_sidechain, atom2res=atom2res, atom2alpha_index=atom2alpha_index)
-    #data.nx = to_networkx(data, to_undirected=True)
 
     return data
 
@@ -334,7 +160,6 @@ def rdmol_to_data(mol:Mol, smiles=None, data_cls=Data):
 
     data = data_cls(atom_type=z, pos=pos, edge_index=edge_index, edge_type=edge_type,
                 rdmol=copy.deepcopy(mol), smiles=smiles)
-    #data.nx = to_networkx(data, to_undirected=True)
 
     return data
 
@@ -432,16 +257,6 @@ def preprocess_GEOM_dataset(base_path, dataset_name, max_conf=5, train_size=0.8,
 
     num_mols = np.zeros(4, dtype=int) # (tot, train, val, test)
     num_confs = np.zeros(4, dtype=int) # (tot, train, val, test)
-
-    '''
-    # mol.get('uniqueconfs') != len(mol.get('conformers'))
-    with open(os.path.join(base_path, pickle_path_list[1878]), 'rb') as fin:
-        mol = pickle.load(fin)
-    print(mol.get('uniqueconfs'), len(mol.get('conformers')))
-    print(mol.get('conformers')[0]['rd_mol'].GetConformer(0).GetPositions())
-    print(mol.get('conformers')[1]['rd_mol'].GetConformer(0).GetPositions())
-    return 
-    '''
 
     bad_case = 0
 
@@ -550,9 +365,6 @@ def preprocess_GEOM_dataset_with_fixed_num_conf(base_path, dataset_name, conf_pe
         num_confs += conf_per_mol
         smiles_list.append(smiles)
         pickle_path_list.append(pickle_path)
-        # we need do a shuffle and sample first max_size items here.
-        #if num_mols >= max_size:
-        #    break
     random.shuffle(pickle_path_list)
     assert len(pickle_path_list) >= tot_mol_size, 'the length of all available mols is %d, which is smaller than tot mol size %d' % (len(pickle_path_list), tot_mol_size)
 
@@ -570,7 +382,6 @@ def preprocess_GEOM_dataset_with_fixed_num_conf(base_path, dataset_name, conf_pe
     split_indexes = list(range(tot_mol_size))
     random.shuffle(split_indexes)
     index2split = {}
-    #print(int(len(split_indexes) * train_size), int(len(split_indexes) * (train_size + val_size)), len(split_indexes))
     for i in range(0, int(len(split_indexes) * train_size)):
         index2split[split_indexes[i]] = 'train'
     for i in range(int(len(split_indexes) * train_size), int(len(split_indexes) * (train_size + val_size))):
@@ -695,9 +506,6 @@ def get_test_set_with_large_num_conf(base_path, dataset_name, block, tot_mol_siz
         num_confs += u_conf
         smiles_list.append(smiles)
         pickle_path_list.append(pickle_path)
-        # we need do a shuffle and sample first max_size items here.
-        #if num_mols >= tot_mol_size:
-        #    break
 
     random.shuffle(pickle_path_list)
     assert len(pickle_path_list) >= tot_mol_size, 'the length of all available mols is %d, which is smaller than tot mol size %d' % (len(pickle_path_list), tot_mol_size)
@@ -765,9 +573,7 @@ class ConformationDataset(Dataset):
         self.edge_types = self._edge_types()
 
     def get(self, idx):
-#        print('idx:',idx)
         data = self.data[idx].clone()
-#        data = self.data.clone()
         if self.transform is not None:
             data = self.transform(data)        
         return data
@@ -815,8 +621,6 @@ class SidechainConformationDataset(ConformationDataset):
         backbone_index = dummy_index[~is_sidechain]
 
 
-        #stop=False
-        #while not stop:
         # step 1
         if self.fix_subgraph:
             center_atom_index = backbone_index[backbone_index.size(0) // 2].view(1,)
@@ -835,7 +639,6 @@ class SidechainConformationDataset(ConformationDataset):
         keep_index = dummy_index[is_keep_atom]
         mapping[keep_index] = torch.arange(keep_index.size(0))
         if (data.is_sidechain[is_keep_atom]).sum().item() == 0:
-            #stop = True
             return None
 
         # return subgraph data
@@ -892,7 +695,6 @@ class PackedConformationDataset(ConformationDataset):
                 all_pos.append(v[i].pos)
             data.pos_ref = torch.cat(all_pos, 0) # (num_conf*num_node, 3)
             data.num_pos_ref = torch.tensor([len(all_pos)], dtype=torch.long)
-            #del data.pos
 
             if hasattr(data, 'totalenergy'):
                 del data.totalenergy

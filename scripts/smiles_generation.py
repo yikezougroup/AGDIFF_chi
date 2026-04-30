@@ -309,8 +309,6 @@ if __name__ == '__main__':
     parser.add_argument('--num_refs', type=int, default=100)  
     parser.add_argument('--max_num_refs', type=int, default=200)  
     parser.add_argument('--gpus', type=int, default=1)  
-#    parser.add_argument('--num_confs', type=num_confs, default=num_confs('5x'),
- #                       help='Number of conformers to generate. Use "Nx" to multiply, e.g., "2x"')
     parser.add_argument('--tag', type=str, default='', help='Tag for the output directory')
     parser.add_argument('--device', type=str, default='cuda', help='Device to use: "cuda" or "cpu"')
     parser.add_argument('--clip', type=float, default=1000.0, help='Clipping value for gradients')
@@ -332,8 +330,6 @@ if __name__ == '__main__':
     print("Loading checkpoint...")
     try:
         ckpt = torch.load(args.ckpt, map_location=args.device)
-#        ckpt = torch.load(args.ckpt, map_location=torch.device(args.device))
-#        ckpt = torch.load(args.ckpt, map_location=torch.device('cpu'))
         print(f"Checkpoint loaded successfully from {args.ckpt}")
     except Exception as e:
         print(f"Error loading checkpoint: {e}")
@@ -517,10 +513,7 @@ if __name__ == '__main__':
                 print("Conformations sampled successfully.")
      
                 if args.save_traj:
-                    #print(pos_gen.shape)
                     data_input.pos_gen = torch.stack(pos_gen_traj)
-                    #print('wdz')
-                    #print(pos_gen.shape)
                 else:
                     data_input.pos_gen = pos_gen
                 results.append(data_input)
@@ -543,8 +536,6 @@ if __name__ == '__main__':
         if not success:
             print("Sampling failed after retries.")
             exit(1)
-    #else:
-     #   print('over max')    
 
 
         # Reshape generated positions
@@ -840,7 +831,6 @@ if __name__ == '__main__':
                     conf.SetAtomPosition(atom_idx, Chem.rdGeometry.Point3D(x, y, z))
                 conf.SetId(i)
                 mol.AddConformer(conf, assignId=True)
-                #print(f"Added conformer {i} to the molecule.")
             print(f"Total of {num_samples} conformers added to the molecule.")
         except Exception as e:
             print(f"Error updating molecule with conformers: {e}")

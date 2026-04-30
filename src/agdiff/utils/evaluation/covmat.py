@@ -23,7 +23,6 @@ def get_rmsd_confusion_matrix(data: Data, useFF=False):
     for i in range(num_gen):
         gen_mol = set_rdmol_positions(data['rdmol'], data['pos_gen'][i])
         if useFF:
-            #print('Applying FF on generated molecules...')
             MMFFOptimizeMolecule(gen_mol)
         for j in range(num_ref):
             ref_mol = set_rdmol_positions(data['rdmol'], data['pos_ref'][j])

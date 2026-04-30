@@ -25,3 +25,4 @@ logs/**
 !logs/cremp_default_batch64_2024_12_12__14_42_15/best_model/
 !logs/cremp_default_batch64_2024_12_12__14_42_15/best_model/best_model.pt
 !logs/cremp_default_batch64_2024_12_12__14_42_15/cremp_default_batch64.yml
+*.egg-info/

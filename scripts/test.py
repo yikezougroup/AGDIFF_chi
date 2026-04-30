@@ -93,15 +93,6 @@ if __name__ == '__main__':
             logger.info('Molecule#%d is already done.' % i)
             continue
 
-#        print('wdz')
- #       print(data.pos_ref)
-  #      print('w1')
-   #     print(data.pos_ref.size)
-    #    print('w2')
-     #   print(data.pos_ref.size(0))
-      #  print('w3')
-       # print(data.num_nodes)
-        
         num_refs = data.pos_ref.size(0) // data.num_nodes
         print('num_refs:', num_refs)
 
@@ -147,10 +138,8 @@ if __name__ == '__main__':
                         )
                         # Accumulate in Python lists
                         pos_gen_all.append(pos_gen.cpu())
-#                        pos_gen_all.append(pos_gen)
                         if args.save_traj:
                             pos_gen_traj_all.append(torch.stack(pos_gen_traj).cpu())
-#                            pos_gen_traj_all.append(torch.stack(pos_gen_traj))
                         break
          
                     except FloatingPointError:

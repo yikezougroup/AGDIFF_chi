@@ -8,7 +8,6 @@ from glob import glob
 import torch
 import torch.utils.tensorboard
 from torch.nn.utils import clip_grad_norm_
-#from torch_geometric.data import DataLoader
 from torch_geometric.loader import DataLoader
 
 from src.agdiff.models.epsnet import get_model
@@ -68,11 +67,6 @@ if __name__ == '__main__':
     logger.info('Loading datasets...')
     transforms = CountNodesPerGraph()
     train_set = ConformationDataset(config.dataset.train, transform=transforms)
-#    print('train_set:',train_set)
- #   print('train_set0:',train_set[0])
-  #  print('Edge index:', train_set[0].edge_index)
-#    print('train_set1:',train_set[1])
-#    print('train_set100000:',train_set[100000])
     val_set = ConformationDataset(config.dataset.val, transform=transforms)
     train_iterator = inf_iterator(DataLoader(train_set, config.train.batch_size, shuffle=True, num_workers=1, pin_memory=True))
     val_loader = DataLoader(val_set, config.train.batch_size, shuffle=False, pin_memory=True)
@@ -84,7 +78,6 @@ if __name__ == '__main__':
 
     # Optimizer
     optimizer_global = get_optimizer(config.train.optimizer, model.model_global)
-    #optimizer_global = torch.optim.AdamW(model.parameters(), lr=1.5e-4, weight_decay=5e-3)
     optimizer_local = get_optimizer(config.train.optimizer, model.model_local)
     scheduler_global = get_scheduler(config.train.scheduler, optimizer_global)
     scheduler_local = get_scheduler(config.train.scheduler, optimizer_local)
@@ -107,9 +100,6 @@ if __name__ == '__main__':
         optimizer_global.zero_grad()
         optimizer_local.zero_grad()
         batch = next(train_iterator).to(args.device)
-#        print('batch:', batch)
- #       print('edge_index:', batch.edge_index)
-#        loss, loss_global, loss_local = model.get_loss_diffusion(
         loss = model.get_loss_diffusion(
             atom_type=batch.atom_type,
             pos=batch.pos,
@@ -118,29 +108,15 @@ if __name__ == '__main__':
             batch=batch.batch,
             num_nodes_per_graph=batch.num_nodes_per_graph,
             num_graphs=batch.num_graphs,
-            anneal_power=config.train.anneal_power#,
-            #return_unreduced_loss=True
+            anneal_power=config.train.anneal_power,
         )
 
-        #print('loss:',loss,loss.size())
         loss = loss.mean()
-        #print('loss_mean:',loss)
 
         loss.backward()
         orig_grad_norm = clip_grad_norm_(model.parameters(), config.train.max_grad_norm)
         optimizer_global.step()
         optimizer_local.step()
-
-        #logger.info('[Train] Iter %05d | Loss %.2f | Loss(Global) %.2f | Loss(Local) %.2f | Grad %.2f | LR(Global) %.6f | LR(Local) %.6f' % (
-         #   it, loss.item(), loss_global.mean().item(), loss_local.mean().item(), orig_grad_norm, optimizer_global.param_groups[0]['lr'], optimizer_local.param_groups[0]['lr'],
-        #))
-        #writer.add_scalar('train/loss', loss, it)
-        #writer.add_scalar('train/loss_global', loss_global.mean(), it)
-        #writer.add_scalar('train/loss_local', loss_local.mean(), it)
-        #writer.add_scalar('train/lr_global', optimizer_global.param_groups[0]['lr'], it)
-        #writer.add_scalar('train/lr_local', optimizer_local.param_groups[0]['lr'], it)
-        #writer.add_scalar('train/grad_norm', orig_grad_norm, it)
-        #writer.flush()
 
     def validate(it):
         sum_loss, sum_n = 0, 0

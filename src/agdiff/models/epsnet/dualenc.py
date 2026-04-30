@@ -100,7 +100,7 @@ class DualEncoderEpsNetwork(nn.Module):
         self.model_global = nn.ModuleList([self.edge_encoder_global, self.encoder_global, self.grad_global_dist_mlp])
         self.model_local = nn.ModuleList([self.edge_encoder_local, self.encoder_local, self.grad_local_dist_mlp])
 
-        self.model_type = config.type  # config.type  # 'diffusion'; 'dsm'
+        self.model_type = config.type  # 'diffusion' or 'dsm'
 
         if self.model_type == 'diffusion':
             # denoising diffusion
@@ -123,7 +123,7 @@ class DualEncoderEpsNetwork(nn.Module):
                 np.exp(np.linspace(np.log(config.sigma_begin), np.log(config.sigma_end),
                                 config.num_noise_level)), dtype=torch.float32)
             self.sigmas = nn.Parameter(sigmas, requires_grad=False) # (num_noise_level)
-            self.num_timesteps = self.sigmas.size(0)  # betas.shape[0]
+            self.num_timesteps = self.sigmas.size(0)
 
 
     def forward(self, atom_type, pos, bond_index, bond_type, batch, time_step, 
@@ -137,7 +137,6 @@ class DualEncoderEpsNetwork(nn.Module):
             batch:      Node index to graph index, (N, ).
         """
 
-        #N = atom_type.size(0)
         if edge_index is None or edge_type is None or edge_length is None:
             edge_index, edge_type = extend_graph_order_radius(
                 num_nodes=atom_type.size(0),
@@ -164,7 +163,6 @@ class DualEncoderEpsNetwork(nn.Module):
             edge_length=edge_length,
             edge_type=edge_type
         )   # Embed edges
-        # edge_attr += temb_edge
 
         # Global
         node_attr_global = self.encoder_global(
@@ -188,7 +186,6 @@ class DualEncoderEpsNetwork(nn.Module):
             edge_length=edge_length,
             edge_type=edge_type
         )   # Embed edges
-        # edge_attr += temb_edge
 
         # Local
         node_attr_local = self.encoder_local(
@@ -215,14 +212,12 @@ class DualEncoderEpsNetwork(nn.Module):
 
     def get_loss_diffusion(self, atom_type, pos, bond_index, bond_type, batch, num_nodes_per_graph, num_graphs, 
                  anneal_power=2.0, return_unreduced_loss=False, extend_order=True, extend_radius=True):
-        #N = atom_type.size(0)
-
         # Four elements for DDPM: original_data(pos), gaussian_noise(pos_noise), beta(sigma), time_step
         # Sample noise levels        
         time_step = torch.randint(
             0, self.num_timesteps, size=(num_graphs//2,), device=pos.device)
         time_step = torch.cat(
-            [time_step, self.num_timesteps-time_step-1], dim=0)#[:num_graphs]
+            [time_step, self.num_timesteps-time_step-1], dim=0)
 
         # Perturb pos
         a_pos = self.alphas.index_select(0, time_step).index_select(0, batch).unsqueeze(-1)  # (G, ) # (N, 1)
@@ -243,10 +238,7 @@ class DualEncoderEpsNetwork(nn.Module):
             extend_radius = extend_radius
         )   # (E_global, 1), (E_local, 1)
 
-        #edge2graph = batch.index_select(0, edge_index[0])
         # Compute sigmas_edge
-        #a_edge = a.index_select(0, edge2graph).unsqueeze(-1)  # (E, 1)
-        #a_edge = self.alphas.index_select(0, time_step).index_select(0, edge2graph).unsqueeze(-1)  # (E, 1)
         a_edge = self.alphas.index_select(0, time_step).index_select(0, batch.index_select(0, edge_index[0])).unsqueeze(-1)  # (E, 1)
 
         # Compute original and perturbed distances
@@ -276,7 +268,6 @@ class DualEncoderEpsNetwork(nn.Module):
 
         # loss for atomic eps regression
         loss = loss_global + loss_local
-        # loss_pos = scatter_add(loss_pos.squeeze(), node2graph)  # (G, 1)
 
         if return_unreduced_loss:
             return loss, loss_global, loss_local
@@ -300,7 +291,7 @@ class DualEncoderEpsNetwork(nn.Module):
 
         def compute_alpha(beta, t):
             beta = torch.cat([torch.zeros(1).to(beta.device), beta], dim=0)
-            a = (1 - beta).cumprod(dim=0).index_select(0, t + 1)  # .view(-1, 1, 1, 1)
+            a = (1 - beta).cumprod(dim=0).index_select(0, t + 1)
             return a
         
         sigmas = (1.0 - self.alphas).sqrt() / self.alphas.sqrt()
@@ -340,11 +331,9 @@ class DualEncoderEpsNetwork(nn.Module):
                 else:
                     node_eq_global = 0
                 # Sum
-                eps_pos = node_eq_local + node_eq_global * w_global # + eps_pos_reg * w_reg
-                noise = torch.randn_like(pos)  #  center_pos(torch.randn_like(pos), batch)
+                eps_pos = node_eq_local + node_eq_global * w_global
+                noise = torch.randn_like(pos)
                 step_size = step_lr * (sigmas[i] / 0.01) ** 2
-                #pos_next = pos + step_size * eps_pos / sigmas[i] + noise * torch.sqrt(step_size*2)
-                #pos = pos_next
                 pos = pos + step_size * eps_pos / sigmas[i] + noise * torch.sqrt(step_size*2)
 
                 if torch.isnan(pos).any():
