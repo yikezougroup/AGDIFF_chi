@@ -128,41 +128,47 @@ def rdmol_to_data(mol: Chem.Mol, smiles=None):
     return data
 
 def _agdiff_bond_stats(mol):
-    """Return min/max/mean covalent bond lengths for the molecule conformer."""
+    """Return finite bond statistics, or None for missing/invalid geometry."""
     if mol.GetNumConformers() == 0:
         return None
     conf = mol.GetConformer(0)
+    # Check every atom, including disconnected atoms not visited by the bonds.
+    if not np.isfinite(conf.GetPositions()).all():
+        return None
     distances = []
     for bond in mol.GetBonds():
         i, j = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
         pi, pj = conf.GetAtomPosition(i), conf.GetAtomPosition(j)
-        distances.append(math.dist((pi.x, pi.y, pi.z), (pj.x, pj.y, pj.z)))
+        distance = math.dist((pi.x, pi.y, pi.z), (pj.x, pj.y, pj.z))
+        if not math.isfinite(distance):
+            return None
+        distances.append(distance)
     if not distances:
         return None
     return min(distances), max(distances), sum(distances) / len(distances)
 
 
 def _agdiff_3d_chiral_centers(mol):
-    """Infer chiral centers from the current 3D conformer when possible.
+    """Infer centers only from finite 3D coordinates; return None on failure.
 
-    The generated samples can be the mirror image of the tagged template.  For
-    filtering we therefore clear existing atom chiral tags on a copy and ask
-    RDKit to assign tags from 3D coordinates, falling back to the molecule tags
-    if coordinate-based perception fails.
+    An empty dictionary denotes successful perception of an achiral molecule,
+    not a perception failure. Never fall back to the tagged template.
     """
     try:
+        if mol.GetNumConformers() == 0:
+            return None
         probe = Chem.Mol(mol)
-        for atom in probe.GetAtoms():
-            atom.SetChiralTag(Chem.rdchem.ChiralType.CHI_UNSPECIFIED)
-        if probe.GetNumConformers() > 0:
-            Chem.AssignAtomChiralTagsFromStructure(probe, 0, True)
+        conf = probe.GetConformer(0)
+        if not np.isfinite(conf.GetPositions()).all():
+            return None
+        Chem.RemoveStereochemistry(probe)
+        conf.Set3D(True)
+        Chem.AssignAtomChiralTagsFromStructure(probe, conf.GetId(), True)
         Chem.AssignStereochemistry(probe, cleanIt=True, force=True)
-        centers = dict(Chem.FindMolChiralCenters(probe, includeUnassigned=True))
-        if centers:
-            return centers
+        return dict(Chem.FindMolChiralCenters(probe, includeUnassigned=True))
     except Exception as exc:
-        print(f"WARNING: 3D chiral-center perception failed, falling back to molecule tags: {exc}")
-    return dict(Chem.FindMolChiralCenters(mol, includeUnassigned=True))
+        print(f"WARNING: 3D chiral-center perception failed; rejecting molecule: {exc}")
+        return None
 
 
 def _agdiff_reflect_mol_coordinates(mol):
@@ -195,13 +201,15 @@ def _agdiff_target_chiral_centers(smiles):
 
 
 def _agdiff_chirality_matches(mol, specified_centers):
-    """Match specified centers; detect fully reversed enantiomers for flipping."""
+    """Require fresh R/S assignments at every specified target center."""
     centers = _agdiff_3d_chiral_centers(mol)
-    assigned = {idx: val for idx, val in centers.items() if val != '?'}
-    if len(centers) == 0 or len(assigned) == 0:
-        return True, centers, 'no_assigned_chiral_centers_flippable'
+    if centers is None:
+        return False, {}, 'chiral_perception_failed'
 
     opposite = {'R': 'S', 'S': 'R'}
+    for idx, expected in specified_centers.items():
+        if expected not in opposite or centers.get(idx) not in opposite:
+            return False, centers, f'specified_center_{idx}_unassigned'
     if specified_centers and all(
         expected in opposite and centers.get(idx) == opposite[expected]
         for idx, expected in specified_centers.items()
@@ -216,12 +224,11 @@ def _agdiff_chirality_matches(mol, specified_centers):
 
 def filter_sdf_by_chirality(sdf_file, output_sdf, smiles, num_needed,
                             min_bond=0.8, max_bond=2.0):
-    """Robust Filter.sdf writer.
+    """Write at most num_needed conformers passing strict chirality/bond QC.
 
-    Always creates output_sdf. Accepts molecules that match originally specified
-    chiral centers. If the generated molecule has no assigned chiral centers, it
-    is accepted because it can be flipped later. Also performs a basic covalent
-    bond-length sanity check so collapsed/fragmented samples are not returned.
+    Always creates output_sdf. Every specified center must have a matching R/S
+    assignment from finite coordinates; missing or undefined assignments fail.
+    Fully reversed conformers may be reflected only with a successful recheck.
     """
     target_centers, specified_centers = _agdiff_target_chiral_centers(smiles)
     print(f"Target chiral centers: {target_centers}")
@@ -235,6 +242,8 @@ def filter_sdf_by_chirality(sdf_file, output_sdf, smiles, num_needed,
     rejected_bond = 0
     suppl = Chem.SDMolSupplier(sdf_file, removeHs=False)
     for i, cand in enumerate(suppl):
+        if saved_mols >= num_needed:
+            break
         if cand is None:
             continue
         total_mols += 1
@@ -274,7 +283,7 @@ def filter_sdf_by_chirality(sdf_file, output_sdf, smiles, num_needed,
     print(f"Filter summary: total_seen={total_mols}, saved={saved_mols}, rejected_chirality={rejected_chi}, rejected_bond={rejected_bond}, output={output_sdf}")
     print(f"Indices of saved molecules: {saved_mol_indices}")
     if saved_mols == 0:
-        print("WARNING: Filter.sdf was created but no conformers passed the relaxed chirality + bond QC filter.")
+        print("WARNING: Filter.sdf was created but no conformers passed the strict chirality + bond QC filter.")
     return saved_mols, saved_mol_indices
 
 
