@@ -135,11 +135,11 @@ ALA6='C[C@@H]1NC(=O)[C@H](C)NC(=O)[C@H](C)NC(=O)[C@H](C)NC(=O)[C@H](C)NC(=O)[C@H
 
 python -m scripts.generate_filtered "$CKPT" --smiles "$ALA5" \
   --out outputs/ala5 --target 100 --batch-size 128 \
-  --seed 202609270 --n-steps 5000 --keep-raw
+  --seed 202609270 --n-steps 5000
 
 python -m scripts.generate_filtered "$CKPT" --smiles "$ALA6" \
   --out outputs/ala6 --target 100 --batch-size 128 \
-  --seed 202609271 --n-steps 5000 --keep-raw
+  --seed 202609271 --n-steps 5000
 ```
 
 - `--target` must be positive. Generation stops automatically after the first
