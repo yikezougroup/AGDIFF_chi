@@ -8,7 +8,7 @@ import unittest
 class GenerationControlTest(unittest.TestCase):
     def api(self):
         self.assertIsNotNone(importlib.util.find_spec('scripts.generate_filtered'),
-            'Explicit candidate-budget/accepted-target entry point is required')
+            'Target-driven generation entry point is required')
         return importlib.import_module('scripts.generate_filtered')
 
     def test_batch_sizes_never_exceed_cap_and_preserve_exact_budget(self):
@@ -29,7 +29,6 @@ class GenerationControlTest(unittest.TestCase):
         self.assertFalse(api.target_met(99, 100))
         self.assertTrue(api.target_met(100, 100))
         self.assertTrue(api.target_met(120, 100))
-        self.assertTrue(api.target_met(0, 0))  # Explicit candidate-shard mode.
 
     def test_nonempty_output_directory_is_not_overwritten(self):
         api = self.api()

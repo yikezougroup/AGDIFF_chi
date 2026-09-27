@@ -1,4 +1,4 @@
-"""Fixed-budget sampling with a separate, strictly filtered acceptance target.
+"""Sample until the strictly filtered target or stereocenter-based raw cap is met.
 
 Run from the repository root: python -m scripts.generate_filtered --help
 One process uses one scheduler-assigned GPU; use unique seeds, output directories
@@ -49,9 +49,8 @@ def main(argv=None):
     parser.add_argument('--smiles', required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--target', type=int, default=100,
-                        help='Required accepted count; 0 collects all accepted candidates for a shard')
-    parser.add_argument('--candidates', type=int, required=True,
-                        help='Raw candidate budget; independent of accepted target and stereocenter count')
+                        help='Positive accepted count; raw cap is int(target * 1.2 * 2**n), '
+                             'n counts RDKit chiral centers including unassigned centers')
     parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--seed', type=int, required=True)
     parser.add_argument('--candidate-offset', type=int, default=0)
@@ -62,12 +61,19 @@ def main(argv=None):
     parser.add_argument('--device', default='cuda')
     parser.add_argument('--threads', type=int, default=4)
     parser.add_argument('--keep-raw', action='store_true')
-    parser.add_argument('--early-stop', action='store_true',
-                        help='Stop after a completed batch meets target; default samples full budget')
     args = parser.parse_args(argv)
-    if args.target < 0 or args.candidate_offset < 0 or args.threads <= 0:
-        parser.error('target/offset must be nonnegative and threads positive')
-    sizes = deque(batch_sizes(args.candidates, args.batch_size))
+    if args.target <= 0 or args.batch_size <= 0 or args.candidate_offset < 0 or args.threads <= 0:
+        parser.error('target, batch-size and threads must be positive; offset must be nonnegative')
+    base = Chem.MolFromSmiles(args.smiles)
+    if base is None or len(Chem.GetMolFrags(base)) != 1:
+        parser.error('SMILES must describe one valid connected molecule')
+    # Count potential centers, not just explicitly assigned R/S centers. This
+    # controls oversampling only; the filter still checks specified centers.
+    chiral_center_count = len(Chem.FindMolChiralCenters(
+        base, includeUnassigned=True, useLegacyImplementation=False))
+    candidate_budget = int(args.target * 1.2 * 2**chiral_center_count)
+    schedule = iter(batch_sizes(candidate_budget, args.batch_size))
+    sizes = deque()  # Only pending OOM splits, never the exponential schedule.
     torch.set_num_threads(args.threads)
     prepare_output(args.out)
     checkpoint = torch.load(args.ckpt, map_location='cpu', weights_only=False)
@@ -77,9 +83,6 @@ def main(argv=None):
     model = get_model(config).to(args.device).eval()
     model.load_state_dict(checkpoint['model'], strict=True)
     seed_all(args.seed)
-    base = Chem.MolFromSmiles(args.smiles)
-    if base is None or len(Chem.GetMolFrags(base)) != 1:
-        parser.error('SMILES must describe one valid connected molecule')
     mol = Chem.AddHs(base)
     # Featurization uses only connectivity/atom types, with zero reference positions.
     # Initial coordinates below are fresh Gaussian noise, not embedded or optimized.
@@ -96,8 +99,8 @@ def main(argv=None):
     raw_writer = Chem.SDWriter(str(args.out / 'raw.sdf')) if args.keep_raw else None
     writer = Chem.SDWriter(str(output_path))
     try:
-        while sizes:
-            size = sizes.popleft()
+        while counts['generated'] < candidate_budget and not target_met(counts['written'], args.target):
+            size = sizes.popleft() if sizes else next(schedule)
             batch = None
             try:
                 batch = repeat_data(data, size)
@@ -148,7 +151,7 @@ def main(argv=None):
                     if candidate is None:
                         raise ValueError('Filtered candidate was not readable')
                     reasons[candidate.GetProp('agdiff_filter_reason')] += 1
-                    if args.target == 0 or counts['written'] < args.target:
+                    if counts['written'] < args.target:
                         index = candidate.GetIntProp('agdiff_source_final_index')
                         candidate.SetProp('agdiff_candidate_id', str(args.candidate_offset + counts['generated'] + index))
                         candidate.SetProp('agdiff_seed', str(args.seed))
@@ -161,11 +164,15 @@ def main(argv=None):
             batches.append({'size': size, 'accepted': accepted, 'written': written_chunk})
             chunk_raw.unlink()
             chunk_filtered.unlink()
-            progress = {**counts, 'elapsed_s': time.monotonic() - start, 'batches': batches}
+            stop_reason = ('target_met' if target_met(counts['written'], args.target)
+                           else 'candidate_budget_exhausted' if counts['generated'] == candidate_budget
+                           else 'running')
+            progress = {**counts, 'chiral_center_count': chiral_center_count,
+                        'candidate_budget': candidate_budget, 'stop_reason': stop_reason,
+                        'elapsed_s': time.monotonic() - start, 'batches': batches}
             (args.out / 'progress.json').write_text(json.dumps(progress, indent=2))
             print('PROGRESS', json.dumps(progress), flush=True)
-            if args.early_stop and args.target > 0 and target_met(counts['written'], args.target):
-                break
+
     finally:
         writer.close()
         if raw_writer:
@@ -176,7 +183,10 @@ def main(argv=None):
         raise ValueError('Output SDF record count does not match generation accounting')
     success = target_met(actual, args.target)
     summary = {
-        'success': success, 'target': args.target, 'candidate_budget': args.candidates,
+        'success': success, 'target': args.target, 'candidate_budget': candidate_budget,
+        'chiral_center_count': chiral_center_count,
+        'chiral_center_policy': 'RDKit FindMolChiralCenters(includeUnassigned=True, useLegacyImplementation=False)',
+        'stop_reason': 'target_met' if success else 'candidate_budget_exhausted',
         **counts, 'rejected': counts['generated'] - counts['accepted'],
         'filter_reasons': dict(reasons), 'seed': args.seed, 'candidate_offset': args.candidate_offset,
         'smiles': args.smiles, 'checkpoint_sha256': hashlib.sha256(args.ckpt.read_bytes()).hexdigest(),

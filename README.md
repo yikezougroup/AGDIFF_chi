@@ -121,10 +121,11 @@ For GPU generation, `cuda_available` should be `True`.
 
 ## Generate conformers from a SMILES string
 
-### Explicit candidate budget and accepted target (recommended)
+### Target-driven filtered generation (recommended)
 
-`generate_filtered` separates the **number of raw candidates** from the
-**required number of accepted conformers**. One process uses one device. Run it
+`generate_filtered` samples batches until the **required number of accepted
+conformers** is reached or the automatic raw-candidate cap is exhausted.
+One process uses one device. Run it
 from the repository root in the installed environment:
 
 ```bash
@@ -133,30 +134,49 @@ ALA5='C[C@@H]1NC(=O)[C@H](C)NC(=O)[C@H](C)NC(=O)[C@H](C)NC(=O)[C@H](C)NC1=O'
 ALA6='C[C@@H]1NC(=O)[C@H](C)NC(=O)[C@H](C)NC(=O)[C@H](C)NC(=O)[C@H](C)NC(=O)[C@H](C)NC1=O'
 
 python -m scripts.generate_filtered "$CKPT" --smiles "$ALA5" \
-  --out outputs/ala5 --target 100 --candidates 3200 --batch-size 128 \
+  --out outputs/ala5 --target 100 --batch-size 128 \
   --seed 202609270 --n-steps 5000 --keep-raw
 
 python -m scripts.generate_filtered "$CKPT" --smiles "$ALA6" \
-  --out outputs/ala6 --target 100 --candidates 6400 --batch-size 128 \
+  --out outputs/ala6 --target 100 --batch-size 128 \
   --seed 202609271 --n-steps 5000 --keep-raw
 ```
 
-- The default samples the entire explicit budget; `--early-stop` may stop at a
-  completed batch once the accepted target is met.
-- The budgets above are `100 * 2**5` and `100 * 2**6`. They are starting budgets,
-  **not guarantees** of 100 accepted samples. A shortfall writes its summary and
-  exits with status **2**, rather than claiming success. Generate additional
-  independently seeded candidates if needed; do not relax QC to fill the target.
+- `--target` must be positive. Generation stops automatically after the first
+  completed batch that meets the target; `--candidates` and `--early-stop` have
+  been removed. The last raw batch is capped to the remaining raw allowance.
+- The raw upper limit is `int(target * 1.2 * 2**n)`, where `n` is the number of
+  RDKit chiral centers in the input graph, **including unassigned centers**:
+  `Chem.FindMolChiralCenters(base, includeUnassigned=True, useLegacyImplementation=False)`.
+  This counts atom chiral centers, not E/Z double bonds. It changes only the
+  oversampling allowance; QC still compares only explicitly specified centers.
+  An achiral molecule uses `n=0`. The examples above have caps of **3,840** and
+  **7,680** raw candidates, respectively, not guaranteed accepted counts.
+- A shortfall writes its summary and exits with status **2**, rather than claiming
+  success. Generate a new independently seeded run if needed; do not relax QC to
+  fill the target. A successful run exits with status **0**.
 - `molecules.sdf` contains at most the requested target. `summary.json` distinguishes
   generated, accepted, rejected, and written counts and records sampler settings,
   seed, checkpoint hash, batch sizes, and CUDA peak allocated/reserved memory.
-- `--target 0` is explicit shard mode: retain all accepted candidates. For parallel
-  sampling, use one process per scheduler-assigned GPU with distinct seeds, output
-  directories and non-overlapping `--candidate-offset` ranges, then merge and
-  independently validate before selecting the final target count.
+  Accepted counts include all QC passes in completed batches; written counts are
+  capped at the target. Summary and progress metadata include `chiral_center_count`,
+  `candidate_budget` (the automatic cap), and `stop_reason` (`target_met` or
+  `candidate_budget_exhausted`; intermediate progress uses `running`). The summary
+  also records the explicit `chiral_center_policy`.
+- For parallel sampling, assign a **positive accepted target per shard**, one
+  process per scheduler-assigned GPU, distinct seeds, and separate output
+  directories. The old `--target 0` collect-all shard mode is no longer supported.
+  Reserve non-overlapping `--candidate-offset` ranges using each shard's full
+  automatic cap, not its eventual generated count. For equal shard targets and
+  the same molecule, shard `i` can use offset `i * int(shard_target * 1.2 * 2**n)`.
+  Each shard stops independently and may exit 2 with a shortfall. Merge retained
+  accepted records and independently validate before selecting the final target;
+  a shard shortfall must not be reported as global success without that count gate.
 - `--batch-size` is a candidate count, not a reference multiplier. Start conservatively
   and measure peak VRAM over the full trajectory. An OOM splits only the failed
-  batch and records the retry; it does not silently reduce the candidate budget.
+  batch and records the retry; it does not silently reduce the raw cap. Future
+  batches are scheduled lazily, so the exponential cap does not allocate a huge
+  queue. Pending retries are abandoned when the accepted target is reached.
 - Full coordinate histories are disabled in this entry point. This changes storage,
   not the sampled coordinates. No force-field optimization is performed.
 - Existing nonempty output directories are not overwritten. Use a new directory for
@@ -168,7 +188,7 @@ python -m scripts.generate_filtered "$CKPT" --smiles "$ALA6" \
 The original command below remains available. Its target is
 `num_confs * num_refs`; its candidate budget also includes stereocenter oversampling
 and a 1.2 safety factor. **`--gpus` only divides that budget; it does not launch
-multiple GPU workers.** Prefer the explicit-budget entry point above for sharding
+multiple GPU workers.** Prefer the target-driven entry point above for sharding
 and a checked acceptance target.
 
 Example: generate five filtered conformers for cyclo(Ala-Ala-Ala-Ala-Ala).
@@ -218,7 +238,11 @@ OMP_NUM_THREADS=1 python -m unittest discover -s tests -v
 
 Tests cover checkpoint/encoder routing, trajectory-storage parity, strict 3D
 stereochemistry (including planar, mirrored and mixed-chirality controls), nonfinite
-geometry, exact batching, target shortfalls and overwrite protection.
+geometry, target-driven stopping, assigned/unassigned center caps, lazy scheduling,
+tail batches, target shortfalls, OOM recovery, large metadata IDs and overwrite
+protection. Target-loop control tests use an explicitly synthetic sampler with real
+RDKit I/O/QC; metadata and OOM integration tests use a tiny real CPU model. These
+tests are not a large-GPU generation or conformational-quality benchmark.
 
 ## Original AGDIFF usage
 

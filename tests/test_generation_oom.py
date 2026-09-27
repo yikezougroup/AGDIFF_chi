@@ -46,9 +46,9 @@ class GenerationOOMTest(unittest.TestCase):
         self.addCleanup(self.output_root.cleanup)
         self.out = Path(self.output_root.name) / 'output'
 
-    def argv(self, candidates, batch_size):
+    def argv(self, target, batch_size):
         return [str(self.checkpoint), '--smiles', 'N#N', '--out', str(self.out),
-                '--target', '0', '--candidates', str(candidates),
+                '--target', str(target),
                 '--batch-size', str(batch_size), '--candidate-offset', '37',
                 '--seed', '17', '--device', 'cpu', '--threads', '1',
                 '--n-steps', '2', '--keep-raw']
@@ -114,14 +114,19 @@ class GenerationOOMTest(unittest.TestCase):
         expected_sizes = [5, 2, 1, 2, 2] if after_success else [2, 1, 2, 2]
         expected_attempts = [5, 5, 2, 3, 1, 2, 2] if after_success else [5, 2, 3, 1, 2, 2]
         with self.inject_oom(site, lambda size, call: size > 2 and (not after_success or call > 1)) as state:
-            self.assertEqual(generation.main(self.argv(budget, 5)), 0)
+            status = generation.main(self.argv(10 if after_success else 6, 5))
         self.assertEqual(state['attempts'], expected_attempts)
         self.assertEqual(state['sampled'], expected_sizes)
         self.assertEqual(state['collect'].call_count, 2)
         self.assertTrue(all(ref() is None for ref in state['failed_batches']))
         summary = json.loads((self.out / 'summary.json').read_text())
         progress = json.loads((self.out / 'progress.json').read_text())
-        self.assertTrue(summary['success'])
+        target = 10 if after_success else 6
+        success = summary['written'] == target
+        self.assertEqual(status, 0 if success else 2)
+        self.assertEqual(summary['success'], success)
+        self.assertEqual(summary['chiral_center_count'], 0)
+        self.assertEqual(summary['stop_reason'], 'target_met' if success else 'candidate_budget_exhausted')
         self.assertEqual(summary['candidate_budget'], budget)
         self.assertEqual(summary['generated'], budget)
         self.assertEqual(summary['oom_retries'], 2)
@@ -143,10 +148,10 @@ class GenerationOOMTest(unittest.TestCase):
             if .8 < np.linalg.norm(xyz[0] - xyz[1]) < 2.:
                 expected_ids.append(mol.GetIntProp('agdiff_candidate_id'))
         self.assertTrue(expected_ids, 'Fixture must exercise accepted output IDs')
-        self.assertEqual([m.GetIntProp('agdiff_candidate_id') for m in accepted], expected_ids)
-        self.assertEqual(summary['accepted'], len(accepted))
+        self.assertEqual([m.GetIntProp('agdiff_candidate_id') for m in accepted], expected_ids[:target])
+        self.assertEqual(summary['accepted'], len(expected_ids))
         self.assertEqual(summary['written'], len(accepted))
-        self.assertEqual(summary['rejected'], budget - len(accepted))
+        self.assertEqual(summary['rejected'], budget - len(expected_ids))
         for mol in accepted:
             self.assertEqual(mol.GetIntProp('agdiff_seed'), 17)
         self.assertFalse((self.out / '.chunk_raw.sdf').exists())

@@ -47,19 +47,23 @@ class GenerationMetadataTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=self.root.name) as directory:
             out = Path(directory) / 'output'
             argv = [str(self.checkpoint), '--smiles', 'N#N', '--out', str(out),
-                    '--target', '0', '--candidates', str(budget), '--batch-size', '5',
+                    '--target', '10', '--batch-size', '5',
                     '--candidate-offset', str(offset), '--seed', str(seed),
                     '--device', 'cpu', '--threads', '1', '--n-steps', '2']
             if keep_raw:
                 argv.append('--keep-raw')
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(generation.main(argv), 0)
+                status = generation.main(argv)
+
+            summary = json.loads((out / 'summary.json').read_text())
+            generated = summary['generated']
+            self.assertIn(generated, (10, 12))
 
             accepted = self.read_sdf(out / 'molecules.sdf')
             self.assertTrue(accepted, 'Fixture must exercise accepted metadata writes')
             accepted_ids = [int(m.GetProp('agdiff_candidate_id')) for m in accepted]
-            expected_ids = list(range(offset, offset + budget))
+            expected_ids = list(range(offset, offset + generated))
             self.assertEqual(accepted_ids, sorted(set(accepted_ids)))
             self.assertTrue(set(accepted_ids).issubset(expected_ids))
             if offset == 2147483647:
@@ -67,16 +71,18 @@ class GenerationMetadataTest(unittest.TestCase):
                                 'Fixture must accept an ID above signed32')
 
             all_molecules = list(accepted)
+            passing_ids = []
             if keep_raw:
                 raw = self.read_sdf(out / 'raw.sdf')
-                self.assertEqual(len(raw), budget)
+                self.assertEqual(len(raw), generated)
                 self.assertEqual([m.GetProp('agdiff_candidate_id') for m in raw],
                                  [str(value) for value in expected_ids])
                 # N#N is achiral, so audit the real bond gate independently to
                 # verify filtered IDs still refer to their original candidates.
                 passing_ids = [int(m.GetProp('agdiff_candidate_id')) for m in raw
                                if .8 < np.linalg.norm(np.diff(m.GetConformer().GetPositions(), axis=0)) < 2.]
-                self.assertEqual(accepted_ids, passing_ids)
+                self.assertEqual(accepted_ids, passing_ids[:10])
+                self.assertEqual(summary['accepted'], len(passing_ids))
                 all_molecules.extend(raw)
             else:
                 self.assertFalse((out / 'raw.sdf').exists())
@@ -93,25 +99,32 @@ class GenerationMetadataTest(unittest.TestCase):
                 if seed <= 2147483647:
                     self.assertEqual(mol.GetIntProp('agdiff_seed'), seed)
 
-            summary = json.loads((out / 'summary.json').read_text())
             progress = json.loads((out / 'progress.json').read_text())
-            self.assertTrue(summary['success'])
-            self.assertEqual(summary['target'], 0)
+            success = len(accepted) == 10
+            self.assertEqual(status, 0 if success else 2)
+            self.assertEqual(summary['success'], success)
+            self.assertEqual(summary['target'], 10)
+            self.assertEqual(summary['chiral_center_count'], 0)
+            self.assertEqual(summary['stop_reason'], 'target_met' if success else 'candidate_budget_exhausted')
             self.assertEqual(summary['seed'], seed)
             self.assertEqual(summary['candidate_offset'], offset)
             self.assertEqual(summary['candidate_budget'], budget)
-            self.assertEqual(summary['generated'], budget)
-            self.assertEqual(summary['accepted'], len(accepted))
+            self.assertEqual(len(accepted), min(10, summary['accepted']))
             self.assertEqual(summary['written'], len(accepted))
-            self.assertEqual(summary['rejected'], budget - len(accepted))
+            self.assertEqual(summary['rejected'], generated - summary['accepted'])
             self.assertEqual(summary['oom_retries'], 0)
-            self.assertEqual(summary['filter_reasons'], {'specified_centers_match': len(accepted)})
+            self.assertEqual(summary['filter_reasons'], {'specified_centers_match': summary['accepted']})
             expected_batches = []
             start = offset
-            for size in (5, 5, 2):
+            for batch, size in zip(summary['batch_sizes'], [5, 5] + ([2] if generated == 12 else [])):
                 count = sum(start <= value < start + size for value in accepted_ids)
-                expected_batches.append({'size': size, 'accepted': count, 'written': count})
+                if keep_raw:
+                    passed = sum(start <= value < start + size for value in passing_ids)
+                    self.assertEqual(batch['accepted'], passed)
+                self.assertGreaterEqual(batch['accepted'], count)
+                expected_batches.append({'size': size, 'accepted': batch['accepted'], 'written': count})
                 start += size
+            self.assertEqual(sum(b['accepted'] for b in expected_batches), summary['accepted'])
             self.assertEqual(summary['batch_sizes'], expected_batches)
             for key in ('generated', 'accepted', 'written', 'oom_retries'):
                 self.assertEqual(progress[key], summary[key])
