@@ -163,7 +163,9 @@ def _agdiff_3d_chiral_centers(mol):
             return None
         Chem.RemoveStereochemistry(probe)
         conf.Set3D(True)
-        Chem.AssignAtomChiralTagsFromStructure(probe, conf.GetId(), True)
+        # Rebuild bond stereo as well: E/Z-distinguished ligands can determine
+        # whether an atom is a stereocenter and its CIP label.
+        Chem.AssignStereochemistryFrom3D(probe, conf.GetId(), True)
         Chem.AssignStereochemistry(probe, cleanIt=True, force=True)
         return dict(Chem.FindMolChiralCenters(probe, includeUnassigned=True))
     except Exception as exc:

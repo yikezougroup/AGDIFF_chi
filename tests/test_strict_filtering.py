@@ -18,11 +18,12 @@ from scripts import smiles_generation as generation
 ALL_S = 'N[C@@H](C)C(=O)N[C@@H](C)C(=O)O'
 MIXED = 'N[C@H](C)C(=O)N[C@@H](C)C(=O)O'
 PARTLY_SPECIFIED = 'N[C@@H](C)C(=O)NC(C)C(=O)O'
+EZ_DISTINGUISHED = r'F[C@H](/C=C/C)/C=C\C'
 
 
-def embed(smiles):
+def embed(smiles, seed=17):
     mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
-    if AllChem.EmbedMolecule(mol, randomSeed=17) != 0:
+    if AllChem.EmbedMolecule(mol, randomSeed=seed) != 0:
         raise AssertionError('RDKit fixture embedding failed')
     return mol
 
@@ -54,6 +55,14 @@ class StrictFilteringTest(unittest.TestCase):
                 atom.SetProp('_CIPCode', template.GetProp('_CIPCode'))
         cls.planar = Chem.Mol(cls.all_s)
         AllChem.Compute2DCoords(cls.planar)
+        # RDKit depiction layouts differ across versions. Normalize the shortest
+        # bond to 1 A so this fixture isolates planar chirality, not bond QC.
+        conf = cls.planar.GetConformer()
+        xyz = conf.GetPositions()
+        shortest = min(np.linalg.norm(xyz[b.GetBeginAtomIdx()] - xyz[b.GetEndAtomIdx()])
+                       for b in cls.planar.GetBonds())
+        for index, point in enumerate(xyz / shortest):
+            conf.SetAtomPosition(index, tuple(point))
 
     def run_filter(self, molecules, smiles=ALL_S, num_needed=100):
         scratch = Path(os.environ.get('TMPDIR', Path.home() / '.hermes/cache/scratch'))
@@ -94,6 +103,44 @@ class StrictFilteringTest(unittest.TestCase):
         self.assertEqual(independently_perceived_centers(self.mixed), {1: 'R', 6: 'S'})
         self.assertFalse(generation._agdiff_chirality_matches(self.mixed, self.specified)[0])
         result, _ = self.run_filter([self.mixed])
+        self.assertEqual(result, (0, []))
+
+    def test_ez_distinguished_ligands_are_perceived_freshly(self):
+        mol = embed(EZ_DISTINGUISHED, seed=5)
+        expected = {1: 'R'}
+        self.assertEqual(generation._agdiff_target_chiral_centers(EZ_DISTINGUISHED)[1], expected)
+        # Neither atom nor double-bond template tags may be required to pass.
+        Chem.RemoveStereochemistry(mol)
+        self.assertEqual(independently_perceived_centers(mol), expected)
+        result, saved = self.run_filter([mol], smiles=EZ_DISTINGUISHED)
+        self.assertEqual(result, (1, [0]))
+        self.assertEqual(independently_perceived_centers(saved[0]), expected)
+        self.assertEqual(saved[0].GetProp('agdiff_filter_reason'), 'specified_centers_match')
+
+    def test_ez_distinguished_mirror_is_reflected_and_rechecked(self):
+        mol = embed(EZ_DISTINGUISHED, seed=5)
+        for index, (x, y, z) in enumerate(mol.GetConformer().GetPositions()):
+            mol.GetConformer().SetAtomPosition(index, (-x, y, z))
+        self.assertEqual(independently_perceived_centers(mol), {1: 'S'})
+        result, saved = self.run_filter([mol], smiles=EZ_DISTINGUISHED)
+        self.assertEqual(result, (1, [0]))
+        self.assertEqual(independently_perceived_centers(saved[0]), {1: 'R'})
+        self.assertEqual(saved[0].GetProp('agdiff_filter_reason'),
+                         'all_specified_centers_reversed_flipped_to_match')
+
+    def test_identical_alkene_ligands_reject_stale_ez_template(self):
+        mol = embed(EZ_DISTINGUISHED, seed=5)
+        achiral = embed('FC(/C=C/C)/C=C/C', seed=5)
+        # Keep the target's E/Z and atom tags but replace its coordinates with
+        # two E ligands. Fresh perception must find no target stereocenter.
+        for index, point in enumerate(achiral.GetConformer().GetPositions()):
+            mol.GetConformer().SetAtomPosition(index, tuple(point))
+        self.assertEqual(independently_perceived_centers(mol), {})
+        self.assertFalse(generation._agdiff_chirality_matches(mol, {1: 'R'})[0])
+        stats = generation._agdiff_bond_stats(mol)
+        self.assertGreater(stats[0], 0.8)
+        self.assertLess(stats[1], 2.0)
+        result, _ = self.run_filter([mol], smiles=EZ_DISTINGUISHED)
         self.assertEqual(result, (0, []))
 
     def test_planar_specified_centers_fail_despite_valid_bond_lengths(self):
@@ -143,7 +190,7 @@ class StrictFilteringTest(unittest.TestCase):
 
     def test_perception_exception_fails_closed(self):
         # Fault injection is needed to exercise the external perception failure.
-        with mock.patch.object(Chem, 'AssignAtomChiralTagsFromStructure',
+        with mock.patch.object(Chem, 'AssignStereochemistryFrom3D',
                                side_effect=RuntimeError('forced perception failure')):
             self.assertFalse(generation._agdiff_chirality_matches(self.all_s, self.specified)[0])
             result, _ = self.run_filter([self.all_s])
@@ -155,7 +202,7 @@ class StrictFilteringTest(unittest.TestCase):
             self.assertFalse(generation._agdiff_chirality_matches(self.all_s, self.specified)[0])
 
     def test_perception_failure_is_not_treated_as_achiral(self):
-        with mock.patch.object(Chem, 'AssignAtomChiralTagsFromStructure',
+        with mock.patch.object(Chem, 'AssignStereochemistryFrom3D',
                                side_effect=RuntimeError('forced perception failure')):
             self.assertFalse(generation._agdiff_chirality_matches(embed('CCO'), {})[0])
 
@@ -211,7 +258,7 @@ class StrictFilteringTest(unittest.TestCase):
                 self.assertEqual(result, (0, []))
 
     def test_reflection_requires_successful_fresh_recheck(self):
-        original = Chem.AssignAtomChiralTagsFromStructure
+        original = Chem.AssignStereochemistryFrom3D
         calls = 0
 
         def fail_on_recheck(*args, **kwargs):
@@ -221,7 +268,7 @@ class StrictFilteringTest(unittest.TestCase):
                 raise RuntimeError('forced post-reflection failure')
             return original(*args, **kwargs)
 
-        with mock.patch.object(Chem, 'AssignAtomChiralTagsFromStructure',
+        with mock.patch.object(Chem, 'AssignStereochemistryFrom3D',
                                side_effect=fail_on_recheck):
             result, _ = self.run_filter([self.all_r])
         self.assertEqual(calls, 2)
