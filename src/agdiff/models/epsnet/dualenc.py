@@ -53,6 +53,12 @@ class DualEncoderEpsNetwork(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        # Released AGDIFF_chi checkpoints were trained with the global edge
+        # embedding in BOTH branches. Identical parameter names/shapes let an
+        # independently routed encoder load silently but produce invalid geometry.
+        self.local_edge_encoder = getattr(config, 'local_edge_encoder', 'global')
+        if self.local_edge_encoder not in ('global', 'local'):
+            raise ValueError("local_edge_encoder must be 'global' or 'local'")
 
         """
         edge_encoder:  Takes both edge type and edge length as input and outputs a vector
@@ -182,7 +188,9 @@ class DualEncoderEpsNetwork(nn.Module):
         edge_inv_global = self.grad_global_dist_mlp(h_pair_global) * (1.0 / sigma_edge)    # (E_global, 1)
         
         # Encoding local
-        edge_attr_local = self.edge_encoder_local(
+        local_edge_encoder = (self.edge_encoder_global if self.local_edge_encoder == 'global'
+                              else self.edge_encoder_local)
+        edge_attr_local = local_edge_encoder(
             edge_length=edge_length,
             edge_type=edge_type
         )   # Embed edges
@@ -281,7 +289,8 @@ class DualEncoderEpsNetwork(nn.Module):
         if self.model_type == 'diffusion':
             return self.langevin_dynamics_sample_diffusion(atom_type, pos_init, bond_index, bond_type, batch, num_graphs, extend_order, extend_radius, 
                         n_steps, step_lr, clip, clip_local, clip_pos, min_sigma,global_start_sigma, w_global, w_reg, 
-                        sampling_type=kwargs.get("sampling_type", 'ddpm_noisy'), eta=kwargs.get("eta", 1.))
+                        sampling_type=kwargs.get("sampling_type", 'ddpm_noisy'), eta=kwargs.get("eta", 1.),
+                        save_traj=kwargs.get('save_traj', True))
         
 
 
@@ -342,7 +351,8 @@ class DualEncoderEpsNetwork(nn.Module):
                 pos = center_pos(pos, batch)
                 if clip_pos is not None:
                     pos = torch.clamp(pos, min=-clip_pos, max=clip_pos)
-                pos_traj.append(pos.clone().cpu())
+                if kwargs.get('save_traj', True):
+                    pos_traj.append(pos.clone().cpu())
             
         return pos, pos_traj
     
